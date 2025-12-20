@@ -146,6 +146,17 @@ Important notes:
 
 ## 8. Create dbt Project (CentOS)
 
+Install DBT
+```
+sudo dnf update -y
+sudo yum update
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install "dbt-core==1.9.8" "dbt-snowflake==1.9.4"
+dbt --version
+```
+
 Activate virtual environment:
 
 Initialize dbt:
