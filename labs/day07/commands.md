@@ -74,17 +74,27 @@ DEFAULT_WAREHOUSE = COMPUTE_WH;
 
 ---
 
-### 0.5 Assign Role to User
+
+### 0.5 Assign Warehouse Access
+```sql
+GRANT USAGE ON WAREHOUSE COMPUTE_WH TO ROLE DBT_ROLE;
+```
+
+### 0.6 Assign Role to User
 
 ```sql
 GRANT ROLE OLIST_ROLE TO USER OLIST_USER;
 ```
+
+
 
 ---
 
 ## 2. Create dbt Project
 
 ```bash
+source ~/.venv/bin/activate
+cd ~
 dbt init olist_dbt
 cd olist_dbt
 ls
