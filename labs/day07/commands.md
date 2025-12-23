@@ -82,27 +82,6 @@ GRANT ROLE OLIST_ROLE TO USER OLIST_USER;
 
 ---
 
-## 1. dbt Profile
-
-Edit `~/.dbt/profiles.yml`
-
-```yaml
-olist_dbt:
-  target: dev
-  outputs:
-    dev:
-      type: snowflake
-      account: <account>
-      user: OLIST_USER
-      password: <password>
-      role: OLIST_ROLE
-      database: OLIST
-      schema: ANALYTICS
-      warehouse: COMPUTE_WH
-```
-
----
-
 ## 2. Create dbt Project
 
 ```bash
