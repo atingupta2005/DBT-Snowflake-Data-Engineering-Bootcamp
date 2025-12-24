@@ -26,6 +26,13 @@ cd ~/dbt_olist_project
 nano ~/.dbt/profiles.yml
 ```
 
+Great — then you **should** use two schemas:
+
+* **dev:** `OLIST.ANALYTICS_DEV`
+* **prod:** `OLIST.ANALYTICS`
+
+### 1) Correct `profiles.yml` (dev vs prod schemas)
+
 ```yml
 dbt_olist_project:
   target: dev
@@ -34,17 +41,77 @@ dbt_olist_project:
       type: snowflake
       account: LFQYFCV-HN31035
       user: OLIST_USER
-      password: 
+      password: StrongPassword123
       role: OLIST_ROLE
       warehouse: COMPUTE_WH
       database: OLIST
-      schema: ANALYTICS
+      schema: ANALYTICS_DEV
       threads: 2
       client_session_keep_alive: false
 
     prod:
       type: snowflake
       account: LFQYFCV-HN31035
+      user: OLIST_USER
+      password: StrongPassword123
+      role: OLIST_ROLE
+      warehouse: COMPUTE_WH
+      database: OLIST
+      schema: ANALYTICS
+      threads: 2
+      client_session_keep_alive: false
+```
+
+#### Snowflake SQL to create `ANALYTICS_DEV` + grant permissions
+
+Run as an admin role (e.g., `ACCOUNTADMIN`):
+
+```sql
+use role accountadmin;
+use warehouse compute_wh;
+
+-- ensure role is assigned
+grant role OLIST_ROLE to user OLIST_USER;
+grant role OLIST_ROLE to user ATINGUPTA2006;
+
+-- allow using warehouse + database
+grant usage on warehouse COMPUTE_WH to role OLIST_ROLE;
+grant usage on database OLIST to role OLIST_ROLE;
+
+-- create dev schema
+create schema if not exists OLIST.ANALYTICS_DEV;
+
+-- allow dbt to create objects in dev
+grant usage on schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
+grant create table on schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
+grant create view  on schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
+grant modify on schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
+
+-- (recommended) future grants so the role can query what it creates
+grant select on future tables in schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
+grant select on future views  in schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
+```
+
+
+```yml
+dbt_olist_project:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: 
+      user: OLIST_USER
+      password: 
+      role: OLIST_ROLE
+      warehouse: COMPUTE_WH
+      database: ANALYTICS_DEV
+      schema: ANALYTICS
+      threads: 2
+      client_session_keep_alive: false
+
+    prod:
+      type: snowflake
+      account: 
       user: OLIST_USER
       password: 
       role: OLIST_ROLE
@@ -386,7 +453,7 @@ Validate grain (Snowflake):
 
 ```sql
 select
-  count(*) as rows,
+  count(*) as nrows,
   count(distinct order_id) as distinct_orders
 from OLIST.ANALYTICS_DEV.INT_ORDERS_ENRICHED;
 ```
@@ -449,12 +516,12 @@ dbt run --select +dim_customers +fct_orders
 Validate marts (Snowflake):
 
 ```sql
-select count(*) as rows, count(distinct customer_id) as distinct_customers
+select count(*) as nrows, count(distinct customer_id) as distinct_customers
 from OLIST.ANALYTICS_DEV.DIM_CUSTOMERS;
 ```
 
 ```sql
-select count(*) as rows, count(distinct order_id) as distinct_orders
+select count(*) as nrows, count(distinct order_id) as distinct_orders
 from OLIST.ANALYTICS_DEV.FCT_ORDERS;
 ```
 
@@ -464,7 +531,6 @@ from OLIST.ANALYTICS_DEV.FCT_ORDERS;
 
 ```bash
 dbt docs generate
-dbt docs serve
 ```
 
 ---
@@ -477,6 +543,7 @@ dbt run --target prod --select +dim_customers +fct_orders
 
 ```bash
 dbt docs generate --target prod
+dbt docs serve
 ```
 
 ---
