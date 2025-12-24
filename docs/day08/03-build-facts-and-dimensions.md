@@ -33,8 +33,6 @@ If you need heavy shaping, do it in intermediate first.
 
 ## 1) Pick marts to build today
 
-For Day 08, keep marts small and obvious.
-
 You will build at least:
 
 * One **dimension** model
@@ -55,28 +53,9 @@ A practical set is:
 
 If your intermediate models support it, you can also build an order items fact. Do not do both facts unless your order fact is already stable.
 
-## 2) Define grain before you write SQL
-
-Do this first.
-
-Write the grain in a single sentence:
-
-* “`dim_customers` is one row per customer.”
-* “`fct_orders` is one row per order.”
-
-If you cannot state the grain clearly, stop.
-
-Grain controls everything:
-
-* Which joins are safe
-* Whether aggregations are required
-* Whether the model is reviewable
-
-## 3) Build a dimension model
+## 2) Build a dimension model
 
 Dimension models describe entities.
-
-For Day 08, build a customer dimension.
 
 ### What goes into a dimension
 
@@ -93,24 +72,6 @@ Include:
 
 * Multi-row transaction details
 
-### Surrogate keys (simple)
-
-We will use a simple surrogate key approach.
-
-In many warehouses, dimensions include a surrogate key separate from the natural key. In dbt, this is often implemented using `dbt_utils.generate_surrogate_key`, but Day 08 does not allow custom macros.
-
-For today:
-
-* Keep the natural key as the primary key in the dimension
-* Optionally, you can create a surrogate key using a built-in hash function available in Snowflake
-
-If you generate a surrogate key, it must be:
-
-* Deterministic
-* Based only on stable natural keys
-
-Do not build complex key logic today.
-
 ### Dimension input
 
 A dimension should be built from:
@@ -123,8 +84,6 @@ Prefer building from intermediate if you already created enrichment there.
 ## 4) Build a fact model
 
 Fact models describe events.
-
-For Day 08, build an orders fact.
 
 ### What goes into a fact
 
@@ -165,18 +124,6 @@ Do not use `source()` in marts.
 ## Running marts
 
 Run marts only after staging and intermediate are stable.
-
-Select by folder:
-
-```bash
-dbt run --select models/marts
-```
-
-Or select by model name once you have them:
-
-```bash
-dbt run --select dim_customers fct_orders
-```
 
 Expected outcome:
 

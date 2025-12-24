@@ -31,8 +31,6 @@ Your goal is to produce stable, readable building blocks.
 
 ## Decide your intermediate models
 
-For Day 08, keep the set small.
-
 Use intermediate models to prepare clean inputs for marts built from these raw tables only:
 
 * customers
@@ -119,12 +117,6 @@ SELECT
 FROM enriched
 ```
 
-A few notes:
-
-* Use `LEFT JOIN` when the left table defines the grain and you do not want to lose rows.
-* If you use `INNER JOIN`, be able to explain why losing rows is acceptable.
-* Keep join keys explicit. Do not rely on `USING (...)`.
-
 ## Handling payments and order totals
 
 Payments and order items introduce multiple rows per order. That can break order-grain models if you join directly.
@@ -178,18 +170,6 @@ If you see row counts explode, you have a grain problem.
 ## Run intermediate models
 
 Build intermediate models after staging is stable.
-
-If your project uses folders for selection, run intermediate by folder:
-
-```bash
-dbt run --select models/intermediate
-```
-
-If you have model tags configured, you can select by tag:
-
-```bash
-dbt run --select intermediate
-```
 
 Expected outcome:
 

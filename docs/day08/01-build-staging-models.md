@@ -145,17 +145,7 @@ If raw columns contain mixed casing or awkward names, fix them here.
 
 You should build staging models before touching intermediate or marts.
 
-Run dbt for staging only:
-
-```bash
-dbt run --select staging
-```
-
-If your project does not tag models by folder selection yet, select by path:
-
-```bash
-dbt run --select models/staging
-```
+Run dbt for staging only
 
 Expected outcome:
 
