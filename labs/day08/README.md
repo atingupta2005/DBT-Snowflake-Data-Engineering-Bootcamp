@@ -92,36 +92,6 @@ grant select on future tables in schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
 grant select on future views  in schema OLIST.ANALYTICS_DEV to role OLIST_ROLE;
 ```
 
-
-```yml
-dbt_olist_project:
-  target: dev
-  outputs:
-    dev:
-      type: snowflake
-      account: 
-      user: OLIST_USER
-      password: 
-      role: OLIST_ROLE
-      warehouse: COMPUTE_WH
-      database: ANALYTICS_DEV
-      schema: ANALYTICS
-      threads: 2
-      client_session_keep_alive: false
-
-    prod:
-      type: snowflake
-      account: 
-      user: OLIST_USER
-      password: 
-      role: OLIST_ROLE
-      warehouse: COMPUTE_WH
-      database: OLIST
-      schema: ANALYTICS
-      threads: 2
-      client_session_keep_alive: false
-```
-
 ---
 
 ## 2) Project config (`dbt_project.yml`)
