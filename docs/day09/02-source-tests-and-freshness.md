@@ -1,453 +1,561 @@
-# Defining Sources in dbt
+# Source-Level Tests and Freshness
 
-Up to Day 08, we built staging, intermediate, and mart models successfully.
-We used `ref()` correctly.
-We got full end-to-end runs.
+Today we make raw data **explicitly accountable**.
 
-We also did something that is common early in a project:
-we treated the raw Olist tables as “just tables” and built on top of them.
-
-That approach breaks down as soon as upstream data behaves badly.
-In real pipelines, upstream data behaves badly all the time.
-
-A **dbt source** is how we stop pretending raw data is stable.
-It is how we make the raw boundary explicit.
-
-## What a source is (and what it is not)
-
-A **model** is built by dbt.
-
-* It comes from SQL in your dbt project.
-* dbt compiles it.
-* dbt materializes it (view or table, depending on configuration).
-* You reference it with `ref()`.
-
-A **source** is not built by dbt.
-
-* It already exists in the warehouse.
-* It is loaded by an upstream ingestion process.
-* dbt only reads it.
-* You reference it with `source()`.
-
-This is not just syntax.
-It is a signal in the project.
-
-When you open a dbt model and see:
-
-```sql
-FROM {{ source('olist', 'orders') }}
-```
-
-you immediately know:
-
-* this dependency is upstream
-* dbt cannot “fix” it by rerunning
-* data quality and freshness issues must be handled at the boundary
-
-When you see:
+Up to now, your models probably did something like:
 
 ```sql
 FROM {{ ref('stg_orders') }}
 ```
 
-you know:
+…and you trusted that whatever sits upstream is correct.
 
-* this asset is owned by the dbt project
-* failures are usually in your SQL or in prior dbt models
+Sources change that.
 
-## Why sources exist
+A dbt **source** is your formal contract with upstream data:
 
-Sources solve three practical problems.
-These are not theoretical.
-They show up in production projects within weeks.
+* **This table should exist.**
+* **These columns should look like this.**
+* **This table should be updated on time.**
 
-### 1) Make upstream dependencies visible
+When those expectations break, you want the failure to happen **as early as possible**, before your marts and dashboards become misleading.
 
-Without sources, raw tables are referenced directly.
-That scatters upstream knowledge across many files.
+This document covers two things you will do on Day 09:
 
-When dependencies are scattered:
+1. Add **source-level tests** to raw Olist tables.
+2. Configure **freshness checks** to detect ingestion delays.
 
-* reviews miss upstream assumptions
-* debugging becomes guesswork
-* it is hard to answer “what raw tables does this project rely on?”
+---
 
-Sources centralize that answer in one place.
-They become a readable inventory of upstream inputs.
+## Why source-level tests exist
 
-### 2) Create a contract for raw data
+When a downstream model fails, it is often **too late**.
 
-Raw data is messy.
-Even when the schema is stable, the *meaning* of columns changes.
+Examples:
 
-A source definition is a contract that says:
+* A report shows fewer orders than yesterday.
+* A KPI drops for no business reason.
+* A join suddenly explodes because keys are duplicated.
 
-* this table is an official input
-* these columns matter
-* these keys must behave like keys
+If you only test models, you might catch these problems **after** transformations.
 
-Later today, we attach tests and freshness rules to the same contract.
-That is the point.
-The contract is executable.
+Source tests push detection to the boundary:
 
-### 3) Catch upstream breakage early
+* Raw data is incomplete → fail at the source.
+* Raw keys are duplicated → fail at the source.
+* A dimension table is missing values → fail at the source.
 
-Upstream failures often do not crash your dbt run.
-They produce silent wrong outputs.
+In practice, teams rely on source tests to answer one question:
 
-Examples you will see in real jobs:
+**“Can we trust today’s raw data enough to build downstream models?”**
 
-* `orders` is late today, but yesterday’s data still exists → your marts look “normal” but are stale
-* `customer_id` suddenly has NULLs → joins drop rows silently
-* `order_items` contains duplicate `order_item_id` due to a reload bug → aggregates inflate silently
+---
 
-Sources give you a single place to attach early warning systems.
+## Where source tests live
 
-## Where sources live in the dbt project
-
-Source definitions live in YAML files inside the dbt project.
-Practically, that means: **somewhere under your `models/` directory**.
-
-dbt discovers YAML configuration automatically.
-You do not need to import it.
-
-In this course, Day 09 work is grouped together.
-In the lab, you will create a `source.yml` for the Olist raw tables.
-
-Keep the file focused.
-A single well-organized source YAML is easier to maintain than many tiny YAML files.
-
-## The shape of `source.yml`
-
-The structure is fixed.
-If you get the shape right, dbt can parse it and build a source graph.
-
-Minimum definition for the Olist raw tables:
-
-```yaml
-version: 2
-
-sources:
-  - name: olist
-    schema: <RAW_SCHEMA_NAME>
-    tables:
-      - name: customers
-      - name: orders
-      - name: order_items
-      - name: payments
-      - name: products
-```
-
-### What each field means
-
-* `version: 2`
-
-  * Required. dbt expects version 2 schema files for sources, tests, and docs.
+Source tests belong in your `sources.yml` (or `source.yml`) file under:
 
 * `sources:`
 
-  * A list. Each list item defines one source group.
+  * `tables:`
 
-* `name:`
+    * `columns:`
 
-  * The logical name used inside dbt.
-  * This is what you will type in `source('name', 'table')`.
-
-* `schema:`
-
-  * Where the raw tables live in the warehouse.
-  * This is the raw schema (or dataset) containing the tables.
-
-* `tables:`
-
-  * A list of the tables that belong to this source.
-
-### Naming guidance you will thank yourself for later
-
-Source names should be:
-
-* short
-* lowercase
-* stable
-
-Good:
-
-* `olist`
-
-Bad:
-
-* `raw_olist_source_tables`
-* `olist_data_2025_final`
-
-Remember: you will type this in SQL many times.
-
-## Organizing sources by schema and table
-
-A source is a grouping mechanism.
-In many companies, the grouping aligns to the upstream system.
-
-Examples of real-world source groupings:
-
-* `erp` for finance and inventory tables
-* `crm` for sales pipeline tables
-* `web` for clickstream data
-
-In this course, the upstream system is “Olist raw”.
-So we keep it simple: one source named `olist`.
-
-## Adding table and column metadata
-
-Source YAML is also where documentation lives.
-This is not about writing essays.
-It is about writing the minimum text that prevents confusion.
-
-### Table descriptions
-
-A good table description answers:
-
-* what system the table represents
-* what one row represents (the grain)
-
-Example:
-
-```yaml
-- name: orders
-  description: "Raw orders from the Olist source system. One row per order."
-```
-
-That is enough to prevent a common mistake:
-people assuming the table is at customer-level or item-level.
-
-### Column descriptions
-
-Column descriptions matter most for:
-
-* join keys (`*_id`)
-* timestamps used for time windows
-* categorical fields used for filtering
-
-Avoid writing descriptions like:
-
-* “The order id”
-* “Timestamp of order”
-
-Those do not help anyone.
-
-Write descriptions you would want during an incident.
-If ingestion breaks at 2 AM, you want quick clarity.
-
-Example:
-
-```yaml
-- name: orders
-  description: "Raw orders from the Olist source system. One row per order."
-  columns:
-    - name: order_id
-      description: "Order primary key from the source system."
-    - name: customer_id
-      description: "Customer identifier associated with the order."
-```
-
-### A more complete Olist example (metadata only)
-
-This example shows the pattern you will follow in the lab.
-It documents key join columns without trying to document everything.
+Example shape (not complete):
 
 ```yaml
 version: 2
 
 sources:
   - name: olist
-    schema: <RAW_SCHEMA_NAME>
+    schema: raw
     tables:
-      - name: customers
-        description: "Raw customers from the Olist source system. One row per customer."
-        columns:
-          - name: customer_id
-            description: "Customer primary key from the source system."
-
       - name: orders
-        description: "Raw orders from the Olist source system. One row per order."
         columns:
           - name: order_id
-            description: "Order primary key from the source system."
-          - name: customer_id
-            description: "Customer identifier associated with the order."
-
-      - name: order_items
-        description: "Raw line items for orders. One row per order item."
-        columns:
-          - name: order_id
-            description: "Order identifier this line item belongs to."
-          - name: product_id
-            description: "Product identifier for the purchased item."
-
-      - name: payments
-        description: "Raw payment records for orders. One row per payment record."
-        columns:
-          - name: order_id
-            description: "Order identifier this payment belongs to."
-
-      - name: products
-        description: "Raw products from the Olist source system. One row per product."
-        columns:
-          - name: product_id
-            description: "Product primary key from the source system."
+            tests:
+              - not_null
+              - unique
 ```
 
-This is not the only valid way to document.
-It is a practical baseline.
+On Day 09 you will define sources for these raw tables only:
 
-## Referencing sources in SQL
+* `customers`
+* `orders`
+* `order_items`
+* `payments`
+* `products`
 
-When you select from raw data inside a dbt model, use `source()`.
+---
 
-Example (staging model pattern):
+## How dbt runs tests
 
-```sql
-SELECT
-  o.order_id,
-  o.customer_id
-FROM {{ source('olist', 'orders') }} AS o
-```
-
-Compare with a reference to a dbt model using `ref()`:
-
-```sql
-SELECT
-  s.order_id,
-  s.customer_id
-FROM {{ ref('stg_orders') }} AS s
-```
-
-### Why this discipline matters
-
-In real projects, the most common debugging question is:
-“Did the problem come from upstream raw data, or from our transformation?”
-
-If your code mixes direct raw table references and `ref()` everywhere, the answer is slow.
-
-If your code uses:
-
-* `source()` for raw
-* `ref()` for dbt models
-
-the answer is fast.
-
-## Seeing sources in the dbt graph
-
-Once sources are defined, dbt treats them like graph nodes.
-You can list them.
-
-Useful commands:
+When you run:
 
 ```bash
-dbt ls --resource-type source
+dbt test
 ```
 
-That should print the sources dbt discovered.
-If it prints nothing, dbt did not load your YAML.
+dbt turns each configured test into a SQL query.
 
-## Real-world use cases where sources pay off
+Most dbt tests follow a simple rule:
 
-These are the patterns I see over and over.
+* **If the query returns 0 rows → the test passes.**
+* **If the query returns 1+ rows → the test fails.**
 
-### Use case: upstream key stops being stable
+So a failed test is not abstract. It always means:
 
-You build a staging model and assume `customer_id` is always present.
-Then one day ingestion produces NULL customer IDs.
+* “Here are the rows that violate the rule.”
 
-Without source definitions and tests:
+That is why tests are valuable.
 
-* your staging model still runs
-* joins drop orders
-* your revenue numbers change silently
+They fail with evidence.
 
-With sources:
+---
 
-* you define the contract at the boundary
-* later today you add a `not_null` on the key
-* failures show up before downstream models lie
+## Test 1: not_null
 
-### Use case: ingestion is delayed
+### What it checks
 
-A pipeline runs hourly.
-It fails overnight.
-At 9 AM your stakeholders open dashboards.
+`not_null` ensures a column has **no NULL values**.
 
-Without freshness checks:
+Typical use:
 
-* dbt runs successfully on yesterday’s data
-* everyone sees stale dashboards and thinks they are current
+* Primary keys
+* Required foreign keys
+* Business-critical fields
 
-With sources:
+### What a failure means
 
-* you define a loaded-at timestamp
-* you set warning/error thresholds
-* dbt tells you the data is stale
+A `not_null` failure indicates one of these is happening:
 
-### Use case: table moves schemas
+* Upstream ingestion is dropping values.
+* A parsing step is producing NULLs.
+* The raw table contains partial rows.
 
-A warehouse team reorganizes schemas.
-`RAW.ORDERS` becomes `RAW_OLIST.ORDERS`.
+### Practical example
 
-Without sources:
+If `orders.order_id` is NULL even once:
 
-* dozens of models contain hard-coded references
-* fixing the project is painful
+* You cannot safely join to `order_items`.
+* Counts may be off.
+* Deduping becomes impossible.
 
-With sources:
+In a production pipeline, this is usually a **stop-the-line** issue.
 
-* the schema mapping is centralized
-* you update it once
+---
 
-(You still need to validate the change, but the blast radius is smaller.)
+## Test 2: unique
 
-## Common YAML mistakes (and how to avoid them)
+### What it checks
 
-YAML is unforgiving.
-Most classroom failures on Day 09 are YAML failures.
+`unique` ensures a column has **no duplicates**.
 
-### Mistake: using tabs or inconsistent indentation
+Typical use:
 
-Use spaces.
-Pick one indentation level (2 spaces is common) and stick to it.
+* Natural primary keys (like `order_id`, `customer_id`, `product_id`)
 
-### Mistake: forgetting that `sources` and `tables` are lists
+### What a failure means
 
-This is wrong (missing dashes):
+A `unique` failure means:
 
-```yaml
-sources:
-  name: olist
-```
+* Upstream is sending duplicate rows.
+* A merge job is replaying data.
+* A batch ran twice.
 
-Correct shape (list item with dash):
+Duplicates at the source are dangerous because they can:
 
-```yaml
-sources:
-  - name: olist
-```
+* Inflate revenue
+* Inflate order counts
+* Inflate item quantities
 
-### Mistake: typos in table names
+### Practical example
 
-`tables:` entries must match the actual raw table names.
-If you misspell one, dbt can still parse YAML, but references will fail later.
+If `orders.order_id` is duplicated:
 
-## Fast validation: make parsing your first checkpoint
+* Any join from `orders` to `order_items` may multiply rows.
+* A dashboard can show *more* orders than actually exist.
 
-After editing your source YAML, run this first:
+---
+
+## Test 3: relationships
+
+### What it checks
+
+`relationships` ensures values in one table **exist in another table**.
+
+This is how you enforce referential integrity in dbt.
+
+Typical use:
+
+* `orders.customer_id` must exist in `customers.customer_id`
+* `order_items.order_id` must exist in `orders.order_id`
+* `order_items.product_id` must exist in `products.product_id`
+
+### What a failure means
+
+A relationships failure means:
+
+* The child table arrived, but the parent table did not.
+* The parent table is incomplete.
+* A foreign key was corrupted.
+* Ingestion is out of order.
+
+This is one of the most useful signals for upstream health.
+
+### Practical example
+
+If `order_items.order_id` contains IDs not present in `orders`:
+
+* Your order item facts cannot roll up correctly.
+* Revenue per order becomes wrong.
+* Models may silently drop items when joining.
+
+In production, this is often caused by:
+
+* Late-arriving orders
+* Partial loads
+* Missing partitions
+
+---
+
+## Test 4: accepted_values
+
+### What it checks
+
+`accepted_values` ensures a column value is in a **known allowed set**.
+
+It is appropriate when:
+
+* The domain is small and stable.
+* The values represent a categorical code.
+* You want to detect a new/unexpected category quickly.
+
+Do not use it when:
+
+* The value space is huge.
+* New values are expected daily.
+* You cannot confidently list all valid values.
+
+### What a failure means
+
+An `accepted_values` failure usually means:
+
+* Upstream introduced a new code.
+* A parsing step changed the format.
+* Dirty values slipped in (leading/trailing spaces, invalid codes).
+
+### Practical example
+
+If you apply `accepted_values` to `orders.order_status`:
+
+* It helps catch a new status like `returned` or `chargeback`.
+* It helps catch typos like `delivered ` (trailing space).
+
+You will decide case-by-case in the lab.
+
+---
+
+## Choosing tests for Olist raw tables
+
+You are not trying to test everything.
+
+You are trying to protect your pipeline from the **most damaging upstream failures**.
+
+Here is a practical starting point for Olist.
+
+### customers
+
+Common protections:
+
+* `customer_id` should be `not_null` and `unique`.
+
+Optional:
+
+* If `customer_state` exists and is stable, `accepted_values` can be useful.
+
+### orders
+
+Common protections:
+
+* `order_id` should be `not_null` and `unique`.
+* `customer_id` should be `not_null`.
+* `customer_id` should have a `relationships` test to `customers`.
+
+Optional:
+
+* `order_status` can use `accepted_values`.
+
+### order_items
+
+Common protections:
+
+* Composite keys are common here, but source tests still help.
+* `order_id` should be `not_null`.
+* `product_id` should be `not_null`.
+* `order_id` should relate to `orders`.
+* `product_id` should relate to `products`.
+
+### payments
+
+Common protections:
+
+* `order_id` should be `not_null`.
+* `order_id` should relate to `orders`.
+
+Optional:
+
+* Payment type fields can be good candidates for `accepted_values`.
+
+### products
+
+Common protections:
+
+* `product_id` should be `not_null` and `unique`.
+
+---
+
+## Running source tests safely
+
+When you add tests, keep the workflow predictable.
+
+### Step 1: validate your project loads
 
 ```bash
 dbt parse
 ```
 
-Do not jump straight to `dbt run`.
-If `dbt parse` fails, you have a YAML or project configuration problem.
-Fix it before doing anything else.
+If YAML indentation is wrong, `dbt parse` usually fails fast.
 
-In the lab, you will:
+### Step 2: run only tests first
 
-* define sources for the five Olist raw tables
-* confirm dbt loads them cleanly
-* then move on to source tests and freshness
+```bash
+dbt test
+```
+
+You should see output that includes:
+
+* test names
+* PASS / FAIL status
+* how long each test took
+
+If a test fails, do not delete it.
+
+Instead:
+
+1. Read the failure output.
+2. Decide if the data really violates the rule.
+3. Decide if your assumption is wrong.
+
+In real teams, tests often drive a conversation with upstream owners.
+
+---
+
+## Freshness in dbt
+
+Tests answer:
+
+* “Is the data shaped correctly?”
+
+Freshness answers:
+
+* “Is the data recent enough to use?”
+
+Freshness checks are especially valuable when:
+
+* Data loads are scheduled.
+* Dashboards depend on daily updates.
+* Late arrivals cause misleading metrics.
+
+A table can be perfectly valid and still be useless if it is **stale**.
+
+---
+
+## loaded_at_field
+
+Freshness requires a timestamp column that tells you **when the row was loaded**.
+
+In dbt this is called:
+
+* `loaded_at_field`
+
+This field should represent:
+
+* The ingestion or load time
+
+Not:
+
+* A business event time (like order purchase time)
+
+Why?
+
+If you use a business event timestamp, freshness will confuse “late orders” with “late ingestion”.
+
+In a production warehouse, teams often add a dedicated ingestion timestamp.
+
+For this training repository:
+
+* Use a timestamp column that exists in the raw table and best represents load time.
+* If you are unsure, you will verify by inspecting the data.
+
+---
+
+## Freshness thresholds
+
+Freshness thresholds let you define two levels:
+
+* `warn_after` → not ideal, but still usable
+* `error_after` → too old to trust
+
+Example shape:
+
+```yaml
+freshness:
+  warn_after:
+    count: 24
+    period: hour
+  error_after:
+    count: 48
+    period: hour
+```
+
+Interpretation:
+
+* If the newest loaded row is older than 24 hours → dbt warns.
+* If it is older than 48 hours → dbt errors.
+
+You pick thresholds based on business expectations.
+
+A daily load pipeline might use:
+
+* warn after 24 hours
+* error after 36–48 hours
+
+A near-real-time pipeline would be much tighter.
+
+---
+
+## Running freshness checks
+
+Freshness checks run with:
+
+```bash
+dbt source freshness
+```
+
+This command:
+
+* checks each configured source/table freshness
+* reports status: PASS, WARN, or ERROR
+
+What you should do with the output:
+
+* If it WARNs, you investigate but may continue.
+* If it ERRORs, you treat upstream ingestion as broken.
+
+In production, freshness checks are often the earliest alert you get that a pipeline is delayed.
+
+---
+
+## Common freshness failure patterns
+
+### 1) Scheduled job did not run
+
+Symptoms:
+
+* Freshness errors suddenly appear across multiple tables.
+
+Typical cause:
+
+* The ingestion scheduler failed.
+
+### 2) Partial ingestion
+
+Symptoms:
+
+* Some tables are fresh, others stale.
+
+Typical cause:
+
+* One source system failed.
+* A dependency table did not load.
+
+### 3) loaded_at_field is wrong
+
+Symptoms:
+
+* Freshness always fails even though the table has new rows.
+
+Typical cause:
+
+* You picked a business timestamp that does not update on load.
+
+Fix:
+
+* Choose a better column for `loaded_at_field`.
+
+---
+
+## YAML mistakes that break tests and freshness
+
+YAML is strict.
+
+Most failures on this day are not SQL problems.
+
+They are indentation or structure problems.
+
+Common issues:
+
+* `tests:` is placed under `tables:` instead of under a column.
+* `columns:` is mis-indented.
+* Using tabs instead of spaces.
+* Forgetting `version: 2` at the top.
+* Typo in `loaded_at_field`.
+
+Your workflow should always include:
+
+```bash
+dbt parse
+```
+
+before you run `dbt test` or `dbt source freshness`.
+
+---
+
+## How to reason about failures
+
+When a source test fails, it is telling you:
+
+* Your raw data violates an assumption.
+
+That assumption might still be correct.
+
+Example:
+
+* `orders.order_id` should be unique.
+
+If it fails, you do not “fix dbt”.
+
+You investigate:
+
+1. Is the raw table duplicated?
+2. Did ingestion replay data?
+3. Did you test the wrong column?
+
+The goal is not to make tests green.
+
+The goal is to make data trustworthy.
+
+---
+
+## What comes next
+
+Day 10 goes deeper on testing.
+
+Today you are learning the boundaries:
+
+* sources define the raw contract
+* source tests prevent bad raw data from flowing downstream
+* freshness catches ingestion delays early
+
+For the lab, you will implement these checks for Olist raw tables and learn how to interpret failures.
