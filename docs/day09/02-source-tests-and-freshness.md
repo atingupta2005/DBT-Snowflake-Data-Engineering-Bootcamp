@@ -160,7 +160,6 @@ Typical use:
 A `unique` failure means:
 
 * Upstream is sending duplicate rows.
-* A merge job is replaying data.
 * A batch ran twice.
 
 Duplicates at the source are dangerous because they can:
@@ -207,7 +206,6 @@ This is one of the most useful signals for upstream health.
 
 If `order_items.order_id` contains IDs not present in `orders`:
 
-* Your order item facts cannot roll up correctly.
 * Revenue per order becomes wrong.
 * Models may silently drop items when joining.
 
@@ -290,7 +288,6 @@ Optional:
 
 Common protections:
 
-* Composite keys are common here, but source tests still help.
 * `order_id` should be `not_null`.
 * `product_id` should be `not_null`.
 * `order_id` should relate to `orders`.

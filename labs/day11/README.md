@@ -1,317 +1,389 @@
-# Day 11 Lab: Make `fct_orders` incremental (and prove it)
+# Day 11 Lab — Incremental Models and Optimization
 
-Today you will modify an existing model so it runs incrementally.
+## Constants
 
-This lab is about **process**, not just code.
-
-If you do not run the model multiple times and observe behavior, you did not complete the lab.
-
----
-
-## What you will do
-
-You will:
-
-1. Convert `fct_orders` to `materialized='incremental'`.
-2. Set `unique_key` correctly.
-3. Add an `is_incremental()` filter with a 3-day lookback window.
-4. Run the model twice to prove idempotency.
-5. Simulate new data and confirm only the new slice is processed.
+* Raw schema: `OLIST.RAW`
+* dbt dev target schema: `OLIST.ANALYTICS_DEV`
+* dbt prod target schema: `OLIST.ANALYTICS`
+* Warehouse: `COMPUTE_WH`
 
 ---
 
-## Rules for this lab
+## 0) Confirm you finished Day 10
 
-* Do not create new models.
-* Do not create new tables.
-* Modify the existing `fct_orders.sql` model.
-* Do not add custom macros.
-* Do not use snapshots.
-
----
-
-## Setup
-
-From the repo root, activate your virtual environment:
+From your project root:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+cd ~/dbt_olist_project
+source ~/.venv/bin/activate
 ```
 
-Confirm dbt can connect:
+These must work before you start Day 11:
 
 ```bash
-dbt debug
+dbt test
 ```
-
-Expected result:
-
-* You see a successful connection to Snowflake.
-
-If `dbt debug` fails, stop.
-Fix your profile before you continue.
-
----
-
-## Task 1: Locate the `fct_orders` model
-
-Find the SQL file that defines `fct_orders`.
-
-Common locations:
-
-* `models/marts/fct_orders.sql`
-* `models/marts/core/fct_orders.sql`
-* `models/fct_orders.sql`
-
-Open the file.
-
-You should see a CTE chain that starts from `orders` and joins to other Olist tables.
-
----
-
-## Task 2: Add incremental configuration
-
-At the top of `fct_orders.sql`, add a config block.
-
-You must include both values:
-
-* `materialized = 'incremental'`
-* `unique_key = 'order_id'`
-
-Do not use `SELECT *`.
-Do not change the grain.
-
----
-
-## Task 3: Add incremental filtering with a lookback window
-
-Add an incremental filter using this pattern:
-
-```sql
-{% if is_incremental() %}
-...
-{% endif %}
-```
-
-Your filter must:
-
-* Apply only on incremental runs
-* Reprocess the last **3 days** of orders
-* Use a timestamp column from `orders`
-
-Use this lookback window (exactly 3 days):
-
-```sql
-{% if is_incremental() %}
-WHERE order_purchase_timestamp >= DATEADD('day', -3, CURRENT_TIMESTAMP)
-{% endif %}
-```
-
-Important:
-
-* Put the filter on the `orders` driving dataset.
-* Do not filter on a joined table.
-
----
-
-## Task 4: Run the model (first run)
-
-Run only `fct_orders`:
 
 ```bash
-dbt run -s fct_orders
+dbt seed --select order_status_map
 ```
-
-Expected result:
-
-* The model builds successfully.
-* dbt creates or updates the target table.
-
----
-
-## Task 5: Run the model again (idempotency check)
-
-Immediately run the same command again:
 
 ```bash
-dbt run -s fct_orders
+dbt snapshot --select customers_snapshot
 ```
 
-Expected result:
-
-* The second run finishes faster.
-* The row count of `fct_orders` does not increase.
-
-If the row count increases, you have duplicates.
-
-Do not continue.
-Fix the model first.
-
-### How to check row count
-
-Run this in Snowflake (use your schema):
-
-```sql
-SELECT COUNT(*) AS row_count
-FROM <your_schema>.fct_orders;
-```
-
-Run it after the first and second run.
-The counts should match.
+If any of these fail, fix Day 10 first.
 
 ---
 
-## Task 6: Simulate new data (so the incremental run has work)
+## 1) Save a git checkpoint (do this before you change anything)
 
-In the real world, new data arrives on its own.
+We will change `fct_orders.sql` to incremental.
 
-In training, we simulate it.
+If you get stuck, you want a clean diff that shows exactly what changed.
 
-You will do that by changing a timestamp in `orders` so one row appears “recent” and falls inside your 3-day lookback window.
+```bash
+git status
+```
 
-### Step A: Pick one order_id to use
+If you see `not a git repository`:
 
-In Snowflake, pick a single order_id from the raw orders table.
+```bash
+git init
+```
 
-Example query:
+Checkpoint the Day 10 state:
+
+```bash
+git add -A
+git commit -m "day10 checkpoint before day11 incremental"
+```
+
+If git says “nothing to commit”, that is fine.
+
+---
+
+## 2) Convert `fct_orders` to an incremental model
+
+### What we are doing
+
+Right now, `fct_orders` is a table built as a full refresh.
+
+On large fact tables, rebuilding from scratch is slow and expensive.
+
+We will:
+
+* switch `fct_orders` to `materialized='incremental'`
+* use `incremental_strategy='merge'` so dbt can **insert new rows** and **update changed rows**
+* set `unique_key='order_id'` so merges are idempotent
+* add a small **lookback window** so late-arriving changes still get reprocessed
+
+### File to edit
+
+Open:
+
+```bash
+nano models/marts/fct_orders.sql
+```
+
+Replace the *entire file* with this content (copy/paste).
 
 ```sql
-SELECT
+{{
+  config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='order_id',
+    on_schema_change='sync_all_columns'
+  )
+}}
+
+WITH orders_enriched AS (
+  SELECT
     order_id,
-    order_purchase_timestamp
-FROM <your_schema>.orders
-ORDER BY order_purchase_timestamp DESC
-LIMIT 5;
-```
+    customer_id,
+    order_status,
+    order_purchase_ts,
+    order_approved_ts,
+    order_delivered_carrier_ts,
+    order_delivered_customer_ts,
+    order_estimated_delivery_date,
 
-Choose one `order_id` from the results.
+    order_item_row_count,
+    distinct_product_count,
+    items_total_value,
+    freight_total_value,
 
-### Step B: Make it look recent
+    payment_total_value,
+    max_payment_installments,
+    payment_row_count,
+    payment_type_any
+  FROM {{ ref('int_orders_enriched') }}
 
-Update that row so `order_purchase_timestamp` is set to the current timestamp.
+  {% if is_incremental() %}
+  WHERE order_purchase_ts >= (
+    SELECT
+      DATEADD(day, -3, MAX(order_purchase_ts))
+    FROM {{ this }}
+  )
+  {% endif %}
+)
 
-Example:
-
-```sql
-UPDATE <your_schema>.orders
-SET order_purchase_timestamp = CURRENT_TIMESTAMP
-WHERE order_id = '<your_order_id>';
-```
-
-Expected result:
-
-* 1 row updated.
-
-Important:
-
-* This is only a training simulation.
-* In production, you do not mutate raw sources like this.
-
----
-
-## Task 7: Run the model again (incremental should pick up the change)
-
-Run:
-
-```bash
-dbt run -s fct_orders
-```
-
-Expected result:
-
-* dbt processes the lookback slice.
-* The order you updated is included in that slice.
-* Your table does **not** duplicate rows.
-
-### Prove there are no duplicates
-
-Run this query in Snowflake:
-
-```sql
 SELECT
-    order_id,
-    COUNT(*) AS row_count
-FROM <your_schema>.fct_orders
-GROUP BY 1
-HAVING COUNT(*) > 1;
+  order_id,
+  customer_id,
+  order_status,
+  order_purchase_ts,
+  order_approved_ts,
+  order_delivered_carrier_ts,
+  order_delivered_customer_ts,
+  order_estimated_delivery_date,
+
+  order_item_row_count,
+  distinct_product_count,
+  items_total_value,
+  freight_total_value,
+
+  payment_total_value,
+  max_payment_installments,
+  payment_row_count,
+  payment_type_any
+FROM orders_enriched
 ```
 
-Expected result:
-
-* No rows returned.
-
-If rows return, stop.
-Your incremental merge is not idempotent.
+Save and exit.
 
 ---
 
-## Task 8: (Optional but useful) Force a rebuild with `--full-refresh`
+## 3) Parse (fail fast)
 
-Now that the model is incremental, practice the reset.
-
-Run:
+This catches syntax/Jinja issues before you run anything.
 
 ```bash
-dbt run -s fct_orders --full-refresh
+dbt parse
 ```
 
-Expected result:
+If this fails:
 
-* The table is rebuilt from scratch.
+* confirm the config block is at the top
+* confirm `{% if is_incremental() %}` and `{% endif %}` are both present
 
-Then run again normally:
+---
+
+## 4) Run `fct_orders` as a full refresh (first build)
+
+The first time you switch to incremental, do a full refresh so the target table matches the new definition.
 
 ```bash
-dbt run -s fct_orders
+dbt run --select fct_orders --full-refresh
 ```
 
-Expected result:
+What to expect:
 
-* The second run is fast and does not change row counts.
-
----
-
-## What to submit / show in class
-
-Be ready to show:
-
-* Your updated `fct_orders.sql` config block
-* Your `is_incremental()` filter
-* Evidence from two consecutive runs that row counts are stable
-* The duplicate-check query returning no rows
+* dbt rebuilds the table from scratch
+* you should see `OK` for `fct_orders`
 
 ---
 
-## Common problems (and what to check)
+## 5) Prove idempotency (run it twice)
 
-### Problem: row count increases on the second run
+An incremental model must be safe to run repeatedly.
 
-Check:
+Run again without `--full-refresh`:
 
-* Did you set `unique_key = 'order_id'`?
-* Is `fct_orders` truly one row per order_id?
-* Did you accidentally create duplicate rows in the final SELECT?
+```bash
+dbt run --select fct_orders
+```
 
-### Problem: incremental run does nothing even after you update `orders`
+What to expect:
 
-Check:
+* dbt runs a `MERGE`
+* the model finishes `OK`
+* row counts should not change
 
-* Is your `WHERE` clause inside the `is_incremental()` block?
-* Are you filtering on the correct timestamp column?
-* Did you update a row inside your target schema’s `orders` table?
+Quick count check in Snowflake:
 
-### Problem: model fails with SQL errors in the Jinja block
+```sql
+select count(*) as nrows
+from OLIST.ANALYTICS_DEV.FCT_ORDERS;
+```
 
-Check:
-
-* Your `{% if %}` and `{% endif %}` tags are correctly placed
-* Your `WHERE` clause is valid SQL in Snowflake
+Run that count query before and after the second run. The number should be the same.
 
 ---
 
-## Stop here
+## 6) Prove the model can correct changes (update case)
 
-Do not start building new models.
+We will simulate an “upstream change” safely by modifying the **target table** in dev.
 
-Next, your instructor will review solution patterns and debugging techniques.
+We are not touching `OLIST.RAW`.
+
+### Step 6A) Pick a recent order_id from the fact table
+
+Pick the most recent order by purchase timestamp:
+
+```sql
+select
+  order_id,
+  order_purchase_ts,
+  payment_total_value
+from OLIST.ANALYTICS_DEV.FCT_ORDERS
+order by order_purchase_ts desc
+limit 1;
+```
+
+Copy the `order_id` value you get.
+
+### Step 6B) Corrupt the row in the target table (dev only)
+
+Update that order’s `payment_total_value` to a wrong value:
+
+```sql
+update OLIST.ANALYTICS_DEV.FCT_ORDERS
+set payment_total_value = payment_total_value + 1
+where order_id = '<PASTE_ORDER_ID_HERE>';
+```
+
+Verify it changed:
+
+```sql
+select
+  order_id,
+  payment_total_value
+from OLIST.ANALYTICS_DEV.FCT_ORDERS
+where order_id = '<PASTE_ORDER_ID_HERE>';
+```
+
+### Step 6C) Run incremental again
+
+```bash
+dbt run --select fct_orders
+```
+
+Because we reprocess a 3-day lookback window based on `order_purchase_ts`, dbt should include that recent order in the merge.
+
+Verify the value is corrected back to the value coming from `int_orders_enriched`:
+
+```sql
+select
+  f.order_id,
+  f.payment_total_value as fct_value,
+  i.payment_total_value as int_value
+from OLIST.ANALYTICS_DEV.FCT_ORDERS f
+join OLIST.ANALYTICS_DEV.INT_ORDERS_ENRICHED i
+  on f.order_id = i.order_id
+where f.order_id = '<PASTE_ORDER_ID_HERE>';
+```
+
+You want `fct_value = int_value`.
+
+---
+
+## 7) Prove inserts work (missing row case)
+
+Now we simulate “a new row needs to be inserted” by deleting a single row from the target table.
+
+Again: dev only. Do not touch raw.
+
+Delete the same order_id from Step 6:
+
+```sql
+delete from OLIST.ANALYTICS_DEV.FCT_ORDERS
+where order_id = '<PASTE_ORDER_ID_HERE>';
+```
+
+Confirm it is gone:
+
+```sql
+select count(*) as nrows
+from OLIST.ANALYTICS_DEV.FCT_ORDERS
+where order_id = '<PASTE_ORDER_ID_HERE>';
+```
+
+Now run incremental again:
+
+```bash
+dbt run --select fct_orders
+```
+
+Confirm the row is back:
+
+```sql
+select count(*) as nrows
+from OLIST.ANALYTICS_DEV.FCT_ORDERS
+where order_id = '<PASTE_ORDER_ID_HERE>';
+```
+
+You want `nrows = 1`.
+
+---
+
+## 8) What the lookback window is doing
+
+This line is the lookback window:
+
+```sql
+WHERE order_purchase_ts >= (
+  SELECT DATEADD(day, -3, MAX(order_purchase_ts))
+  FROM {{ this }}
+)
+```
+
+Meaning:
+
+* dbt looks at the current target table (`{{ this }}`)
+* finds the latest `order_purchase_ts` already loaded
+* backs up 3 days
+* reprocesses that slice on every incremental run
+
+Why this matters:
+
+* If late-arriving data changes something within the last 3 days, it gets picked up.
+* If you set the window too small, you miss late updates.
+* If you set it too large, you reprocess too much data each run.
+
+---
+
+## 9) Backfill behavior (when to use `--full-refresh`)
+
+Use `--full-refresh` when you change logic in a way that affects historical rows.
+
+Examples:
+
+* you change join logic
+* you change aggregation logic
+* you add a filter that changes which rows should exist
+
+Command:
+
+```bash
+dbt run --select fct_orders --full-refresh
+```
+
+---
+
+## 10) Compare changes and commit Day 11
+
+Review what you changed:
+
+```bash
+git diff
+```
+
+Commit:
+
+```bash
+git add -A
+git commit -m "day11 make fct_orders incremental with merge"
+```
+
+---
+
+## Checkpoints
+
+You are done when all of these are true:
+
+1. `fct_orders` is incremental and builds with `--full-refresh`
+2. Running `dbt run --select fct_orders` twice does not change row counts
+3. A corrupted value in dev is corrected by the next incremental run
+4. A deleted row in dev is re-inserted by the next incremental run
