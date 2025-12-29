@@ -11,6 +11,10 @@
 
 ## 0) Confirm you finished Day 09
 
+Day 10 builds on Day 09.
+
+If sources are failing or freshness is broken, your model tests and snapshots will be noisy.
+
 From your project root:
 
 ```bash
@@ -18,7 +22,7 @@ cd ~/dbt_olist_project
 source ~/.venv/bin/activate
 ```
 
-These must work before you start Day 10:
+Run:
 
 ```bash
 dbt test --select source:olist
@@ -28,15 +32,15 @@ dbt test --select source:olist
 dbt source freshness --select source:olist
 ```
 
-If either fails, fix Day 09 first.
+Both must succeed before continuing.
 
 ---
 
 ## 1) Save a git checkpoint (do this before you change anything)
 
-Today you will add YAML files, SQL tests, a seed CSV, and a snapshot.
+Today you will add YAML tests, a custom SQL test, a seed CSV, and a snapshot.
 
-You want a clean diff so you can review exactly what you changed.
+Checkpoint first so you can compare Day 09 vs Day 10 changes.
 
 ```bash
 git status
@@ -48,7 +52,7 @@ If you see `not a git repository`:
 git init
 ```
 
-Checkpoint the Day 09 state:
+Commit the Day 09 state:
 
 ```bash
 git add -A
@@ -61,26 +65,27 @@ If git says “nothing to commit”, that is fine.
 
 ## Part A — Built-in model tests
 
-We are going to test **models**, not sources.
+### What model tests are (simple example)
 
-These tests protect the transformed tables people actually query.
+A model test is a rule applied to a *transformed* table.
 
-### A1) Create a model test YAML file (copy/paste)
+Example:
 
-Create this file:
+* `dim_customers.customer_id` must be unique
+
+If it is not unique, your dimension is no longer one row per customer.
+
+That causes duplicates when you join facts to dimensions.
+
+### A1) Create a marts tests file (copy/paste)
+
+Create:
 
 ```bash
 nano models/marts/_marts_tests.yml
 ```
 
-Paste this content exactly.
-
-This assumes you built these models on Day 08:
-
-* `dim_customers`
-* `fct_orders`
-
-If your model names differ, stop and fix the names in the YAML before running tests.
+Paste:
 
 ```yml
 version: 2
@@ -130,31 +135,37 @@ models:
 
 Save and exit.
 
-### A2) Parse (fail fast)
+### A2) Parse first
+
+Parsing catches YAML/Jinja mistakes early.
 
 ```bash
 dbt parse
 ```
 
-If this fails, do not run tests.
-Fix indentation first.
-
-### A3) Run only the tests for these two models
-
-This runs the tests attached to `dim_customers` and `fct_orders`.
+### A3) Run tests for only these two models
 
 ```bash
 dbt test --select dim_customers fct_orders
 ```
 
-What a failure means:
+How to read failures (practical meaning):
 
-* `unique` fails on `order_id`: your fact table is no longer one row per order
-* `relationships` fails on `customer_id`: you have orders without a matching customer
-* `accepted_values` fails: raw status values changed or your list does not match actual data
+* `unique` fails on `fct_orders.order_id`
 
-If `accepted_values` fails, do not guess.
-Check the actual values in your **model**, not the raw source:
+  * Your fact is no longer one row per order.
+  * Downstream metrics like “number of orders” become wrong.
+
+* `relationships` fails on `fct_orders.customer_id`
+
+  * You have orders that do not match a customer.
+  * Joins to `dim_customers` will drop those orders.
+
+* `accepted_values` fails on `order_status`
+
+  * The upstream status domain changed, or your list is wrong.
+
+If `accepted_values` fails, validate the actual values in Snowflake.
 
 ```sql
 select
@@ -165,18 +176,28 @@ group by order_status
 order by nrows desc;
 ```
 
-Update the list in `_marts_tests.yml` to match exactly.
+Update the YAML list to match exactly.
 
 ---
 
 ## Part B — One custom SQL test (singular test)
 
-Built-in tests cannot express every rule.
+### What a custom (singular) test is
 
-A singular test is just a SQL query.
+A singular test is just a SQL query that returns **violations**.
 
-* If it returns **zero rows**, the test passes.
-* If it returns **any rows**, the test fails and the rows are your debugging output.
+* 0 rows returned → PASS
+* 1+ rows returned → FAIL (and the rows help you debug)
+
+This is useful for rules that are not simple key/relationship checks.
+
+### Example of a real rule
+
+Business rule:
+
+* “If an order is delivered, it should have a delivered timestamp.”
+
+This is not a `not_null` on the column, because non-delivered orders can legitimately have null delivery timestamps.
 
 ### B1) Create the tests folder
 
@@ -184,19 +205,15 @@ A singular test is just a SQL query.
 mkdir -p tests
 ```
 
-### B2) Create one test file (copy/paste)
+### B2) Create the test file (copy/paste)
 
-Create this file:
+Create:
 
 ```bash
 nano tests/delivered_orders_require_delivered_date.sql
 ```
 
-Paste this SQL.
-
-This checks a real rule:
-
-* If `order_status = 'delivered'`, then `order_delivered_customer_ts` must not be null.
+Paste:
 
 ```sql
 SELECT
@@ -217,24 +234,39 @@ Save and exit.
 dbt test --select test_type:singular
 ```
 
-If it fails, do not delete the test.
+If it fails, pull the violating rows from Snowflake too:
 
-Instead:
-
-* Look at the returned rows.
-* Decide whether the rule is wrong, or the data is wrong.
+```sql
+select
+  order_id,
+  order_status,
+  order_delivered_customer_ts,
+  order_purchase_ts
+from OLIST.ANALYTICS_DEV.FCT_ORDERS
+where order_status = 'delivered'
+  and order_delivered_customer_ts is null
+limit 50;
+```
 
 ---
 
 ## Part C — Seed for reference data
 
-A seed is a small CSV under version control.
+### What a seed is (simple example)
 
-Use seeds when the data is:
+A seed is a small CSV committed to git.
 
-* small
-* stable
-* meaningful in business logic
+dbt loads it into your warehouse as a table.
+
+You use it when:
+
+* the data is small (tens/hundreds of rows)
+* the mapping is stable
+* you want the mapping versioned with the code
+
+Real example:
+
+* map `order_status` → `status_group` so dashboards don’t need long CASE statements
 
 ### C1) Create the seeds folder
 
@@ -244,13 +276,13 @@ mkdir -p seeds
 
 ### C2) Create the seed CSV (copy/paste)
 
-Create this file:
+Create:
 
 ```bash
 nano seeds/order_status_map.csv
 ```
 
-Paste this content exactly.
+Paste:
 
 ```csv
 order_status,status_group
@@ -266,15 +298,15 @@ unavailable,canceled
 
 Save and exit.
 
-### C3) Create seed tests YAML (copy/paste)
+### C3) Add seed tests YAML (copy/paste)
 
-Create this file:
+Create:
 
 ```bash
 nano seeds/_seeds.yml
 ```
 
-Paste this content exactly.
+Paste:
 
 ```yml
 version: 2
@@ -309,20 +341,68 @@ dbt seed --select order_status_map
 dbt test --select order_status_map
 ```
 
+### C6) Use the seed in Snowflake (example)
+
+This is what you would do in a reporting query.
+
+```sql
+select
+  m.status_group,
+  count(*) as order_count
+from OLIST.ANALYTICS_DEV.FCT_ORDERS f
+join OLIST.ANALYTICS_DEV.ORDER_STATUS_MAP m
+  on f.order_status = m.order_status
+group by m.status_group
+order by order_count desc;
+```
+
 ---
 
 ## Part D — Snapshot for change tracking
 
-A snapshot keeps history when rows change over time.
+### What a snapshot is (plain English)
 
-For training, we will snapshot customer attributes.
+A snapshot is how you keep **history of changes**.
 
-We are not trying to build a complex historical warehouse.
+Without a snapshot, a table only shows the latest state.
 
-We are proving the mechanics:
+With a snapshot, you can answer questions like:
 
-* first run creates the snapshot table
-* later runs insert new versions when attributes change
+* “What was the customer’s city last month?”
+* “When did this customer attribute change?”
+
+### The common mental model
+
+Think of a snapshot like this:
+
+* A normal dimension table is a single row per customer.
+* A snapshot table is **many rows per customer**, one row per version.
+
+Each version has:
+
+* when it became valid
+* when it stopped being valid
+
+That is SCD Type 2 behavior.
+
+### What we snapshot today
+
+We will snapshot customer attributes from `dim_customers`.
+
+This is realistic:
+
+* customers can change city/state over time
+* analysts often want to understand behavior “as-of” a time period
+
+### Important training detail
+
+The Olist dataset is historical.
+
+There will be no natural changes flowing in.
+
+So we will simulate a change in **dev** to prove snapshots work.
+
+We are not touching `OLIST.RAW`.
 
 ### D1) Create the snapshots folder
 
@@ -330,20 +410,15 @@ We are proving the mechanics:
 mkdir -p snapshots
 ```
 
-### D2) Create the snapshot file (copy/paste)
+### D2) Create the snapshot definition (copy/paste)
 
-Create this file:
+Create:
 
 ```bash
 nano snapshots/customers_snapshot.sql
 ```
 
-Paste this content exactly.
-
-This uses the `check` strategy.
-
-* `unique_key` identifies the row
-* `check_cols` are the attributes we want to track
+Paste:
 
 ```sql
 {% snapshot customers_snapshot %}
@@ -369,9 +444,13 @@ FROM {{ ref('dim_customers') }}
 
 Save and exit.
 
-### D3) Run the snapshot
+What the config means:
 
-Run in dev:
+* `unique_key`: identifies the entity we track (one customer)
+* `strategy='check'`: dbt compares columns in `check_cols`
+* `check_cols`: if any of these change, dbt creates a new version row
+
+### D3) Run the snapshot (first run)
 
 ```bash
 dbt snapshot --select customers_snapshot
@@ -379,16 +458,170 @@ dbt snapshot --select customers_snapshot
 
 What to expect on first run:
 
-* dbt creates a snapshot table
-* dbt inserts one “current” version of each customer
+* dbt creates the snapshot table
+* dbt inserts one current version per customer
 
-### D4) Confirm dbt sees the snapshot
+### D4) Find the snapshot table in Snowflake
+
+Most of the time the table will be:
+
+* `OLIST.ANALYTICS_DEV.CUSTOMERS_SNAPSHOT`
+
+Confirm with:
+
+```sql
+show tables like 'CUSTOMERS_SNAPSHOT' in schema OLIST.ANALYTICS_DEV;
+```
+
+If you do not see it, list snapshots in dbt:
 
 ```bash
 dbt ls --resource-type snapshot
 ```
 
-You should see `customers_snapshot`.
+### D5) Inspect the snapshot schema (Snowflake)
+
+A dbt snapshot table includes metadata columns.
+
+Common ones are:
+
+* `DBT_SCD_ID`
+* `DBT_UPDATED_AT`
+* `DBT_VALID_FROM`
+* `DBT_VALID_TO`
+
+Check what exists in your table:
+
+```sql
+desc table OLIST.ANALYTICS_DEV.CUSTOMERS_SNAPSHOT;
+```
+
+### D6) Query “current” customer records
+
+Current rows are usually where `DBT_VALID_TO` is null.
+
+```sql
+select
+  customer_id,
+  customer_city,
+  customer_state,
+  dbt_valid_from,
+  dbt_valid_to
+from OLIST.ANALYTICS_DEV.CUSTOMERS_SNAPSHOT
+where dbt_valid_to is null
+limit 20;
+```
+
+### D7) Prove it is stable (second run)
+
+Run the snapshot again without changing anything:
+
+```bash
+dbt snapshot --select customers_snapshot
+```
+
+Expected outcome:
+
+* dbt reports success
+* it should not insert new versions, because nothing changed
+
+Quick check (row count should stay the same):
+
+```sql
+select count(*) as nrows
+from OLIST.ANALYTICS_DEV.CUSTOMERS_SNAPSHOT;
+```
+
+### D8) Simulate a change (dev only)
+
+We will force one customer to “move cities” in dev so the snapshot detects a change.
+
+#### Step 1: pick a customer_id
+
+Pick any customer from `dim_customers`:
+
+```sql
+select
+  customer_id,
+  customer_city,
+  customer_state
+from OLIST.ANALYTICS_DEV.DIM_CUSTOMERS
+limit 1;
+```
+
+Copy the `customer_id`.
+
+#### Step 2: update `dim_customers` directly (dev only)
+
+We are deliberately introducing a change in the *model table*.
+
+This is only to demonstrate snapshot behavior.
+
+```sql
+update OLIST.ANALYTICS_DEV.DIM_CUSTOMERS
+set customer_city = 'test_city_day10'
+where customer_id = '<PASTE_CUSTOMER_ID_HERE>';
+```
+
+Verify the change:
+
+```sql
+select
+  customer_id,
+  customer_city,
+  customer_state
+from OLIST.ANALYTICS_DEV.DIM_CUSTOMERS
+where customer_id = '<PASTE_CUSTOMER_ID_HERE>';
+```
+
+#### Step 3: run the snapshot again
+
+```bash
+dbt snapshot --select customers_snapshot
+```
+
+Expected outcome:
+
+* dbt detects the changed city
+* it closes the old version (`dbt_valid_to` becomes non-null)
+* it inserts a new current version (`dbt_valid_to` is null)
+
+#### Step 4: view the history for that customer
+
+```sql
+select
+  customer_id,
+  customer_city,
+  customer_state,
+  dbt_valid_from,
+  dbt_valid_to
+from OLIST.ANALYTICS_DEV.CUSTOMERS_SNAPSHOT
+where customer_id = '<PASTE_CUSTOMER_ID_HERE>'
+order by dbt_valid_from;
+```
+
+You should see two rows:
+
+* older row with `dbt_valid_to` filled
+* current row with `dbt_valid_to` null
+
+### D9) Restore `dim_customers` back to normal
+
+Because you edited a model table manually, reset it by re-running the model.
+
+```bash
+dbt run --select dim_customers
+```
+
+If you want to verify the reset:
+
+```sql
+select
+  customer_id,
+  customer_city
+from OLIST.ANALYTICS_DEV.DIM_CUSTOMERS
+where customer_id = '<PASTE_CUSTOMER_ID_HERE>';
+```
 
 ---
 
@@ -416,6 +649,11 @@ dbt test --select order_status_map
 dbt snapshot --select customers_snapshot
 ```
 
+And you verified in Snowflake that:
+
+* `CUSTOMERS_SNAPSHOT` exists in `OLIST.ANALYTICS_DEV`
+* one customer shows two versions after your simulated change
+
 ---
 
 ## Compare changes and commit Day 10
@@ -439,8 +677,9 @@ git commit -m "day10 add model tests singular test seed snapshot"
 
 Add one more relationship test that matches how you join models.
 
-Good candidate:
+Good candidates:
 
 * `fct_orders.order_id` should exist in `int_orders_enriched.order_id`
+* `dim_customers.customer_unique_id` should be `not_null` if you rely on it
 
 Only add tests you can defend in code review.
