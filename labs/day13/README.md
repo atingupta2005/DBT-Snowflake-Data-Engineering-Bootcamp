@@ -1,16 +1,18 @@
 # Day 13 Lab — Environments, Targets, and Tag-Based Runs
 
-You will do three tasks today.
+Today you will make your dbt project safer to operate.
 
-* Task 1: Update `profiles.yml` to include a `prod` target.
-* Task 2: Add tags to existing models.
-* Task 3: Execute runs targeting specific tags and environments.
+You are **not** creating new models today.
+
+You will do three tasks:
+
+* Task 1: Update `profiles.yml` to include a `prod` target
+* Task 2: Add tags to existing models
+* Task 3: Execute runs targeting specific tags and environments
 
 This lab assumes you already have a working dbt project from earlier days.
 
-You are not creating new models today.
-
-You are making the project safer to operate.
+---
 
 ## Before you start
 
@@ -23,7 +25,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-If your environment is already active, you should see `(.venv)` in your shell prompt.
+Expected outcome:
+
+* your shell prompt shows `(.venv)`
 
 ### 2) Confirm dbt is installed in the venv
 
@@ -35,11 +39,9 @@ Expected outcome:
 
 * dbt prints a version
 
-If the command is not found, install dbt the same way you did earlier in the course.
-
 ### 3) Confirm you are in the dbt project directory
 
-Run this from the dbt project root (the folder containing `dbt_project.yml`):
+Run this from the folder containing `dbt_project.yml`:
 
 ```bash
 ls
@@ -49,20 +51,20 @@ Expected outcome:
 
 * you see `dbt_project.yml` in the output
 
-If you do not, `cd` into the correct directory before continuing.
-
 ---
 
-## Task 1 — Add a PROD target to profiles.yml
+## Task 1 — Add a PROD target to `profiles.yml`
 
 In this course, “PROD” is simulated by writing to a different schema.
 
 * DEV schema: `OLIST_DEV`
 * PROD schema: `OLIST_PROD`
 
-You will configure both in `profiles.yml`.
+Same Snowflake account. Same database. Same warehouse.
 
-### Step 1.1 — Locate your profiles.yml
+The isolation comes from writing dbt outputs into different schemas.
+
+### Step 1.1 — Locate your `profiles.yml`
 
 dbt stores profiles outside the project by default.
 
@@ -78,34 +80,110 @@ Expected outcome:
 
 In that directory, there should be a `profiles.yml`.
 
-### Step 1.2 — Open profiles.yml and add a prod output
+If there is no `profiles.yml`, create one in that directory.
 
-You will add a second target named `prod` under `outputs:`.
+### Step 1.2 — Confirm your project’s profile name
+
+Your profile name must match the `profile:` value in `dbt_project.yml`.
+
+Open `dbt_project.yml` and find:
+
+```yaml
+profile: <something>
+```
+
+That exact value must be the top-level key in `profiles.yml`.
+
+If the names do not match, dbt will load the wrong profile or fail to connect.
+
+### Step 1.3 — Add a second output named `prod`
+
+Open `profiles.yml` and find your profile block (the top-level key from Step 1.2).
+
+Inside it, you should see:
+
+* `outputs:`
+* `target:`
+
+Add a second output under `outputs:` named `prod`.
 
 Hard rules:
 
-* The profile name must match the `profile:` value in `dbt_project.yml`.
-* `threads` must be a literal integer.
-* Use `env_var()` for sensitive fields.
+* `threads` must be a literal integer (example: `threads: 4`)
+* Use `env_var()` for sensitive fields (do **not** hardcode passwords/tokens)
 
-In the next task you will validate this file by running `dbt debug`.
+Practical approach:
 
-Do not guess.
+* Copy your existing `dev` output
+* Paste it as `prod`
+* Change only what must change for PROD
 
-If `dbt debug` fails, fix the profile.
+What should differ (minimum):
 
-### Step 1.3 — Ensure dev writes to OLIST_DEV and prod writes to OLIST_PROD
+* `schema: OLIST_DEV` for `dev`
+* `schema: OLIST_PROD` for `prod`
 
-Your two outputs must differ at least by schema.
+Example of the *shape* you are aiming for (do not copy blindly; match your project and adapter):
 
-* `dev` schema must be `OLIST_DEV`
-* `prod` schema must be `OLIST_PROD`
+```yaml
+outputs:
+  dev:
+    schema: OLIST_DEV
+    threads: 4
+  prod:
+    schema: OLIST_PROD
+    threads: 4
+```
 
-If your schemas do not exist, create them in Snowflake before continuing.
+### Step 1.4 — Snowflake cross-check: confirm schemas exist
 
-(You do not need to create tables. dbt will create tables when it runs.)
+In a Snowflake worksheet, run:
 
-### Step 1.4 — Verify both targets connect
+```sql
+SHOW SCHEMAS LIKE 'OLIST_%';
+```
+
+Expected outcome:
+
+* you see `OLIST_DEV` and `OLIST_PROD`
+
+If one is missing and you have permission, create it:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS OLIST_DEV;
+CREATE SCHEMA IF NOT EXISTS OLIST_PROD;
+```
+
+If schema creation fails, you need a role with the right permissions.
+
+### Step 1.5 — Set environment variables required by your profile
+
+If your `profiles.yml` uses `env_var()`, your terminal session must have those variables set.
+
+Set variables in your current terminal session using `export`.
+
+Example pattern (names are examples — use the exact names referenced in your `profiles.yml`):
+
+```bash
+export SNOWFLAKE_ACCOUNT="<your_account>"
+export SNOWFLAKE_USER="<your_user>"
+export SNOWFLAKE_PASSWORD="<your_password>"
+export SNOWFLAKE_ROLE="<your_role>"
+export SNOWFLAKE_WAREHOUSE="<your_warehouse>"
+export SNOWFLAKE_DATABASE="<your_database>"
+```
+
+Quick check that you actually set them:
+
+```bash
+env | grep -E "SNOWFLAKE|DBT" || true
+```
+
+Expected outcome:
+
+* you see the variable names you rely on
+
+### Step 1.6 — Verify both targets connect
 
 First check DEV:
 
@@ -113,25 +191,22 @@ First check DEV:
 dbt debug --target dev
 ```
 
-Expected outcome:
-
-* “All checks passed” (or equivalent)
-
 Then check PROD:
 
 ```bash
 dbt debug --target prod
 ```
 
-Expected outcome:
+Expected outcome for both:
 
-* “All checks passed” (or equivalent)
+* dbt prints a connection check and ends with “All checks passed” (or equivalent)
 
 If PROD fails but DEV works, the most common causes are:
 
-* typo in schema name
+* typo in the schema name
 * schema does not exist
-* role cannot create objects in the PROD schema
+* role can’t create objects in the PROD schema
+* missing environment variable
 
 Do not continue until both targets pass.
 
@@ -149,13 +224,19 @@ Tag names for today:
 * `daily`
 * `heavy`
 
-### Step 2.1 — Decide which existing models belong to hourly vs daily
+Why tags matter (real-world use cases):
+
+* **Operations:** run different slices on different schedules without branching the project.
+* **Cost control:** exclude heavy models during business hours.
+* **Debugging:** rerun only the slice you changed.
+
+### Step 2.1 — Choose models for each tag
 
 Use these rules.
 
 Hourly:
 
-* models that are fast
+* fast models
 * models needed for frequent refresh
 * lightweight staging models and lightweight marts
 
@@ -170,8 +251,6 @@ Heavy:
 * wide aggregations
 * large joins
 
-Do not overthink it.
-
 Pick at least:
 
 * 2 models tagged `hourly`
@@ -184,43 +263,74 @@ Example:
 
 * a daily mart can also be heavy
 
-### Step 2.2 — Add tags in dbt_project.yml
+### Step 2.2 — Add tags in `dbt_project.yml`
 
-Edit `dbt_project.yml`.
+You can tag in two common ways.
 
-Your goal is:
+#### Option A: tag by folder
 
-* the tags exist
-* dbt can see them
+This is what teams do when a directory has a clear operational meaning.
 
-Do not put secrets here.
+Example patterns (adapt to your folder names):
+
+```yaml
+models:
+  <your_project_name>:
+    staging:
+      +tags: ["hourly"]
+    marts:
+      +tags: ["daily"]
+```
+
+#### Option B: tag by model name
+
+This is what teams do when a few specific models need special treatment.
+
+Example pattern:
+
+```yaml
+models:
+  <your_project_name>:
+    marts:
+      some_mart_model:
+        +tags: ["daily", "heavy"]
+      another_mart_model:
+        +tags: ["daily"]
+```
+
+Important:
+
+* YAML indentation matters
+* Do not put secrets in `dbt_project.yml`
 
 ### Step 2.3 — Prove dbt sees your tags
 
-List the models tagged `daily`:
+List models tagged `daily`:
 
 ```bash
 dbt ls --select tag:daily
 ```
 
-Expected outcome:
-
-* a list of model names
-
-List the models tagged `hourly`:
+List models tagged `hourly`:
 
 ```bash
 dbt ls --select tag:hourly
 ```
 
+List models tagged `heavy`:
+
+```bash
+dbt ls --select tag:heavy
+```
+
 Expected outcome:
 
-* a list of model names
+* each command prints one or more model names
 
-If either command returns nothing:
+If a command returns nothing:
 
-* your tag config is not applied
-* you likely edited the wrong section of `dbt_project.yml`
+* you tagged the wrong place in `dbt_project.yml`, or
+* indentation broke the config
 
 Fix it before continuing.
 
@@ -237,9 +347,23 @@ You will run:
 
 You will also practice excluding heavy models.
 
-### Step 3.1 — Run hourly models in DEV
+Core habit:
 
-Use `+` to include upstream dependencies.
+* **preview the selection with `dbt ls` before you run**
+
+That habit prevents accidental full rebuilds.
+
+### Step 3.1 — Preview and run hourly models in DEV
+
+Preview (use `+` to include upstream dependencies):
+
+```bash
+dbt ls --select +tag:hourly
+```
+
+If the list looks too large, stop and fix tags.
+
+Run:
 
 ```bash
 dbt run --target dev --select +tag:hourly
@@ -248,19 +372,51 @@ dbt run --target dev --select +tag:hourly
 Expected outcome:
 
 * dbt builds a subset of models
-* the output shows only the selected models and their parents
 
-### Step 3.2 — Run daily models in PROD
+### Step 3.2 — Snowflake cross-check: confirm DEV writes into `OLIST_DEV`
 
-Treat this like production.
+In Snowflake, run:
 
-Before running, confirm the target:
+```sql
+SELECT CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_ROLE(), CURRENT_WAREHOUSE();
+```
+
+Then list objects in the DEV schema (you may need to set your database first):
+
+```sql
+-- If needed
+-- USE DATABASE <your_database>;
+
+SHOW TABLES IN SCHEMA OLIST_DEV;
+SHOW VIEWS IN SCHEMA OLIST_DEV;
+```
+
+Expected outcome:
+
+* you see tables/views created by dbt in `OLIST_DEV`
+
+Pick one object name from the output and check row count:
+
+```sql
+SELECT COUNT(*) AS row_count
+FROM OLIST_DEV.<one_object_from_show_tables_or_views>;
+```
+
+### Step 3.3 — Preview and run daily models in PROD
+
+Treat this like production. Confirm the target first:
 
 ```bash
 dbt debug --target prod
 ```
 
-Then run the daily slice:
+Preview the run set:
+
+```bash
+dbt ls --select +tag:daily
+```
+
+Run:
 
 ```bash
 dbt run --target prod --select +tag:daily
@@ -270,13 +426,47 @@ Expected outcome:
 
 * dbt builds into the `OLIST_PROD` schema
 
-If you are unsure where it wrote, stop and check your Snowflake schema.
+### Step 3.4 — Snowflake cross-check: confirm PROD writes into `OLIST_PROD`
 
-Do not keep running commands until you confirm.
+List objects in the PROD schema:
 
-### Step 3.3 — Run daily but exclude heavy
+```sql
+SHOW TABLES IN SCHEMA OLIST_PROD;
+SHOW VIEWS IN SCHEMA OLIST_PROD;
+```
 
-This simulates a “normal daily run” where heavy work is separated.
+Pick one object name and check row count:
+
+```sql
+SELECT COUNT(*) AS row_count
+FROM OLIST_PROD.<one_object_from_show_tables_or_views>;
+```
+
+Optional comparison (use the *same* object name if it exists in both schemas):
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM OLIST_DEV.<object_name>)  AS dev_count,
+  (SELECT COUNT(*) FROM OLIST_PROD.<object_name>) AS prod_count;
+```
+
+If counts differ, do not panic.
+
+Most common reasons:
+
+* you ran different slices (hourly vs daily)
+* dependencies differ because of `+`
+* your tagging decisions differ
+
+### Step 3.5 — Run daily but exclude heavy (PROD)
+
+Preview first:
+
+```bash
+dbt ls --select +tag:daily --exclude tag:heavy
+```
+
+Run:
 
 ```bash
 dbt run --target prod --select +tag:daily --exclude tag:heavy
@@ -287,19 +477,22 @@ Expected outcome:
 * daily models run
 * heavy-tagged models do not run
 
-To verify selection without running, use `dbt ls`:
+Operational example:
+
+* a team runs `daily` every morning
+* `heavy` runs after-hours
+
+Same project. Same code. Different selection.
+
+### Step 3.6 — Run heavy models separately (DEV only)
+
+Preview:
 
 ```bash
-dbt ls --select +tag:daily --exclude tag:heavy
+dbt ls --select tag:heavy
 ```
 
-Expected outcome:
-
-* list of models that would run
-
-### Step 3.4 — Run heavy models separately (DEV only)
-
-This keeps heavy experimentation away from “prod” even in our simulated setup.
+Run:
 
 ```bash
 dbt run --target dev --select tag:heavy
@@ -315,14 +508,39 @@ Expected outcome:
 
 ### If dbt cannot connect
 
-* re-run `dbt debug --target dev`
-* confirm your environment variables are set
-* confirm your schema names exist
+1. Re-run the debug step:
+
+```bash
+dbt debug --target dev
+```
+
+2. Confirm environment variables exist:
+
+```bash
+env | grep -E "SNOWFLAKE|DBT" || true
+```
+
+3. Confirm schemas exist in Snowflake:
+
+```sql
+SHOW SCHEMAS LIKE 'OLIST_%';
+```
 
 ### If selection runs nothing
 
-* run `dbt ls --select tag:daily`
-* fix tags in `dbt_project.yml`
+Start here:
+
+```bash
+dbt ls --select tag:daily
+```
+
+If it’s empty, fix tags in `dbt_project.yml`.
+
+Most common mistakes:
+
+* tags configured under the wrong project key
+* indentation error
+* you edited a different dbt project than the one you are running
 
 ### If you accidentally ran against the wrong target
 
@@ -335,16 +553,19 @@ First confirm:
 * which target you used
 * which schema was written
 
+Snowflake cross-check:
+
+```sql
+SHOW TABLES IN SCHEMA OLIST_DEV;
+SHOW TABLES IN SCHEMA OLIST_PROD;
+```
+
 Then clean up:
 
-* drop the wrong tables in the wrong schema
+* drop the wrong objects in the wrong schema
 * re-run with the correct target
 
 In a real team, you would report this immediately.
-
-In this lab, treat it as practice for the habit:
-
-* confirm target first
 
 ---
 
@@ -356,4 +577,6 @@ You are done when:
 * `dbt debug --target prod` passes
 * `dbt ls --select tag:daily` returns models
 * `dbt ls --select tag:hourly` returns models
-* You have run at least one tag-based build in DEV and one in PROD
+* `dbt ls --select tag:heavy` returns models
+* you have run at least one tag-based build in DEV and one in PROD
+* you verified in Snowflake that objects exist in both `OLIST_DEV` and `OLIST_PROD`

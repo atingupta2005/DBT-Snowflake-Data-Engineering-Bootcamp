@@ -4,11 +4,12 @@ Today you will build and validate a slim CI pipeline.
 
 You will commit one workflow file, open a Pull Request, and watch GitHub run dbt for you.
 
-Your goal is simple:
+Your goal:
 
-* CI must run on every PR.
-* CI must run `dbt deps`, `dbt compile`, `dbt build`.
-* CI must authenticate to Snowflake using GitHub Secrets.
+* CI runs on every PR
+* CI runs `dbt deps`, `dbt compile`, `dbt build`
+* CI authenticates to Snowflake using GitHub Secrets
+* CI can run `dbt docs generate`
 
 ---
 
@@ -16,7 +17,7 @@ Your goal is simple:
 
 You will create exactly one file:
 
-```
+```text
 .github/workflows/dbt.yml
 ```
 
@@ -28,21 +29,56 @@ Do not create any other files.
 
 You need:
 
-* Your dbt project pushed to a GitHub repo.
-* Permission to add repository secrets.
-* Working Snowflake credentials.
+* your dbt project pushed to a GitHub repo
+* permission to add repository secrets
+* working Snowflake credentials
+
+CI runs on a clean machine.
+
+That machine does not have your local `profiles.yml`.
+
+So your workflow must create `profiles.yml` at runtime.
+
+---
+
+## Part 0 — Snowflake prep for CI (1 minute)
+
+CI should not write into your DEV or PROD schemas.
+
+In this lab, CI will write to a separate schema:
+
+* CI schema: `OLIST_CI`
+
+In a Snowflake worksheet, run:
+
+```sql
+SHOW SCHEMAS LIKE 'OLIST_CI';
+```
+
+If it does not exist and you have permission:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS OLIST_CI;
+```
+
+If schema creation fails, your role does not have the right permissions.
+
+Fix that before you continue.
 
 ---
 
 ## Part 1 — Create a feature branch
 
-From the root of your repository:
+From the repo root:
 
 ```bash
 git status
 ```
 
-Expected: you are on your main branch and the working tree is clean.
+Expected:
+
+* you are on your main branch
+* working tree is clean
 
 Create a branch:
 
@@ -66,11 +102,13 @@ Confirm:
 ls -la .github/workflows
 ```
 
-Expected: the directory exists. It may be empty.
+Expected:
+
+* directory exists
 
 ---
 
-## Part 3 — Add a workflow file skeleton
+## Part 3 — Add a workflow skeleton (so you can see it run)
 
 Create the workflow file:
 
@@ -78,9 +116,7 @@ Create the workflow file:
 touch .github/workflows/dbt.yml
 ```
 
-Open it in your editor and add a minimal header.
-
-Use this structure (do not paste a full working solution yet):
+Open it in your editor and add this minimal header:
 
 ```yaml
 name: dbt CI
@@ -96,7 +132,7 @@ jobs:
         uses: actions/checkout@v4
 ```
 
-Commit this skeleton so you can see the workflow appear in GitHub.
+Commit this skeleton.
 
 ```bash
 git add .github/workflows/dbt.yml
@@ -109,30 +145,78 @@ Push your branch:
 git push -u origin day14-ci
 ```
 
+What you should see in GitHub:
+
+* your branch exists
+* Actions may not run yet (because you haven’t opened a PR)
+
 ---
 
-## Part 4 — Add the required CI steps
+## Part 4 — Add Snowflake secrets in GitHub
 
-Now extend your workflow so the job does all of the following:
+Your workflow must not hardcode credentials.
+
+At minimum, store the password as a secret.
+
+Recommended: store all connection fields as secrets.
+
+### Step 4.1 — Required secret
+
+In GitHub:
+
+1. Open your repo
+2. Settings
+3. Secrets and variables → Actions
+4. New repository secret
+
+Create this secret:
+
+```text
+SNOWFLAKE_PASSWORD
+```
+
+Value:
+
+* your Snowflake password
+
+### Step 4.2 — Recommended secrets (use these if you want CI to be clean and portable)
+
+Create these secrets too:
+
+* `SNOWFLAKE_ACCOUNT`
+* `SNOWFLAKE_USER`
+* `SNOWFLAKE_ROLE`
+* `SNOWFLAKE_WAREHOUSE`
+* `SNOWFLAKE_DATABASE`
+
+If you do not create these, you will have to hardcode those values somewhere.
+
+That works, but it’s harder to reuse across repos.
+
+---
+
+## Part 5 — Add the required CI steps
+
+Now extend `.github/workflows/dbt.yml`.
+
+You need these steps in this order:
 
 1. Setup Python
-2. Install dbt packages (dbt-core + dbt-snowflake)
-3. Create a `profiles.yml` at runtime
-4. Run:
+2. Install dbt
+3. Create `~/.dbt/profiles.yml`
+4. Run `dbt deps`
+5. Run `dbt compile`
+6. Run `dbt build`
 
-   * `dbt deps`
-   * `dbt compile`
-   * `dbt build`
+Keep the runner:
 
-### Constraints you must follow
+* `ubuntu-latest`
 
-* Runner must be `ubuntu-latest`
-* The pipeline must run on `pull_request`
-* You must not hardcode your Snowflake password
+Keep the trigger:
 
-### Hints for writing the workflow
+* `pull_request`
 
-#### A) Setup Python
+### Step 5.1 — Set up Python
 
 Use the official action:
 
@@ -143,7 +227,7 @@ Use the official action:
     python-version: "3.11"
 ```
 
-#### B) Install dbt
+### Step 5.2 — Install dbt
 
 Use pip:
 
@@ -154,7 +238,7 @@ Use pip:
     pip install dbt-core dbt-snowflake
 ```
 
-#### C) Create a profiles.yml
+### Step 5.3 — Create `profiles.yml` at runtime
 
 In CI, dbt expects:
 
@@ -162,21 +246,56 @@ In CI, dbt expects:
 
 You will create that file during the run.
 
-You will need `mkdir -p ~/.dbt` and then write YAML to `~/.dbt/profiles.yml`.
+This is the safest pattern:
 
-Important rule:
+* make the directory
+* write YAML using a heredoc
 
-* The password must come from an environment variable named `SNOWFLAKE_PASSWORD`.
-
-That means your profile must include:
+Example skeleton (you must adapt names):
 
 ```yaml
-password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+- name: Write profiles.yml
+  run: |
+    mkdir -p ~/.dbt
+    cat > ~/.dbt/profiles.yml <<'YAML'
+    <your_profile_name>:
+      target: ci
+      outputs:
+        ci:
+          type: snowflake
+          account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+          user: "{{ env_var('SNOWFLAKE_USER') }}"
+          password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+          role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+          warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+          database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+          schema: "OLIST_CI"
+          threads: 4
+    YAML
 ```
 
-#### D) Provide the secret to the dbt step
+Important details:
 
-You will attach the secret to the step using `env:`.
+* `<your_profile_name>` must match `profile:` in `dbt_project.yml`
+* `threads` must be an integer
+* the password must come from `env_var('SNOWFLAKE_PASSWORD')`
+* the `<<'YAML'` quoting prevents the shell from expanding anything accidentally
+
+Quick sanity check (safe):
+
+```yaml
+- name: Show profiles.yml path
+  run: |
+    ls -la ~/.dbt
+```
+
+Do not print secrets.
+
+Do not `cat ~/.dbt/profiles.yml` unless you are confident nothing secret is hardcoded.
+
+### Step 5.4 — Export secrets to the job
+
+Your workflow must provide environment variables.
 
 Example pattern:
 
@@ -185,32 +304,54 @@ env:
   SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
 ```
 
----
+If you created the recommended secrets, export them too:
 
-## Part 5 — Add GitHub repository secret
-
-In GitHub:
-
-1. Open your repo.
-2. Go to **Settings**.
-3. Go to **Secrets and variables** → **Actions**.
-4. Click **New repository secret**.
-5. Name it exactly:
-
-```
-SNOWFLAKE_PASSWORD
+```yaml
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+  SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+  SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
 ```
 
-6. Paste your Snowflake password as the value.
-7. Save.
+Where to attach `env:`
 
-Do not put the password in the workflow file.
+* easiest: attach it at the job level so every step inherits it
+* acceptable: attach it only to the steps that run dbt
 
-Do not commit it anywhere.
+### Step 5.5 — Run the dbt commands
+
+Add these steps:
+
+```yaml
+- name: dbt deps
+  run: dbt deps
+
+- name: dbt compile
+  run: dbt compile
+
+- name: dbt build
+  run: dbt build
+```
+
+If `dbt build` fails, the earlier steps still matter.
+
+Teams use `deps` and `compile` as fast checks before running full builds.
+
+Optional but useful (still slim):
+
+```yaml
+- name: dbt debug
+  run: dbt debug
+```
+
+Put it after the profile is written and before `dbt deps`.
 
 ---
 
-## Part 6 — Commit and push the workflow
+## Part 6 — Commit and push
 
 After you add the steps, commit and push.
 
@@ -226,12 +367,23 @@ git push
 
 In GitHub:
 
-1. Open a Pull Request from `day14-ci` into your main branch.
-2. Go to the PR page.
-3. Find the **Checks** section.
-4. Click into the running workflow.
+1. Open a Pull Request from `day14-ci` into your main branch
+2. On the PR page, find **Checks**
+3. Click the running workflow
 
-You should see the steps run in order.
+What you should see in logs:
+
+* a fresh VM starts (Ubuntu)
+* Python is installed
+* dbt installs via pip
+* your workflow writes `~/.dbt/profiles.yml`
+* dbt runs `deps`, `compile`, `build`
+
+How to read failures:
+
+* click the failed step
+* read from the first red error line upward
+* don’t scroll to the bottom first
 
 ---
 
@@ -241,28 +393,28 @@ You need to see a failure once.
 
 Pick one of these controlled failure options.
 
-### Option A (recommended): remove the secret reference
+### Option A (recommended): remove the secret export
 
-1. In the workflow, temporarily remove the `env:` block that sets `SNOWFLAKE_PASSWORD`.
-2. Commit and push.
+1. Temporarily remove `SNOWFLAKE_PASSWORD` from the workflow `env:`
+2. Commit and push
 
 Expected failure:
 
 * dbt cannot authenticate
-* you will see an error related to missing password / env var
+* error mentions missing password or missing env var
 
-Then restore the `env:` block, commit, and push again.
+Then restore the `env:` export, commit, and push again.
 
-### Option B: change the Python version to something wrong
+### Option B: break Python setup
 
-1. Change `python-version` to a version that is likely unavailable or incompatible.
-2. Commit and push.
+1. Change `python-version` to something incompatible
+2. Commit and push
 
 Expected failure:
 
-* The setup-python step fails
+* the setup-python step fails
 
-Then restore Python 3.11, commit, and push.
+Restore Python 3.11, commit, and push again.
 
 ---
 
@@ -276,18 +428,29 @@ dbt docs generate
 
 Do not publish the docs.
 
-Just generate them to prove the pipeline can run documentation tasks.
+Just generate them to prove CI can run documentation tasks.
+
+Example step:
+
+```yaml
+- name: dbt docs generate
+  run: dbt docs generate
+```
+
+Optional verification (safe):
+
+```yaml
+- name: List generated docs artifacts
+  run: |
+    ls -la target || true
+```
+
+Expected outcome:
+
+* `target/` exists
+* you see files created by docs generation
 
 Commit and push.
-
----
-
-## What you should have when you are done
-
-* A PR with a passing CI check
-* A workflow file committed to your repo
-* A GitHub secret configured
-* A clear understanding of where failures appear (and how to read them)
 
 ---
 
@@ -297,31 +460,56 @@ Commit and push.
 
 Check these first:
 
-* The file path is exactly `.github/workflows/dbt.yml`
-* The branch is pushed to GitHub
-* You opened a Pull Request (not just pushed commits)
+* file path is exactly `.github/workflows/dbt.yml`
+* branch is pushed to GitHub
+* you opened a Pull Request (not just pushed commits)
 
-### The job fails at `dbt build` with auth errors
+### The job fails with auth errors
 
 Check these first:
 
-* The secret name is exactly `SNOWFLAKE_PASSWORD`
-* The workflow step exports `SNOWFLAKE_PASSWORD` in `env:`
-* The generated `profiles.yml` uses `env_var('SNOWFLAKE_PASSWORD')`
+* secret name is exactly `SNOWFLAKE_PASSWORD`
+* workflow exports `SNOWFLAKE_PASSWORD` in `env:`
+* generated `profiles.yml` uses `env_var('SNOWFLAKE_PASSWORD')`
+
+If the error looks like “account not found” or “user not found”, you’re missing other connection fields.
+
+Fix by adding the recommended secrets and exporting them.
 
 ### The job fails with “profile not found”
 
-That means dbt cannot find `~/.dbt/profiles.yml`.
+dbt cannot find `~/.dbt/profiles.yml`.
 
 Confirm your workflow:
 
-* Creates `~/.dbt/`
-* Writes `profiles.yml` to that path
+* creates `~/.dbt/`
+* writes `profiles.yml` into that directory
+
+### The job fails during `dbt deps`
+
+This usually means:
+
+* your `packages.yml` references a package or version that can’t be fetched
+* GitHub Actions can’t reach the internet (rare)
+
+Check the `deps` step logs and fix package references.
+
+### The job fails during `dbt compile`
+
+This usually means:
+
+* a SQL syntax error
+* a missing `ref()` target
+* a config typo
+
+CI is doing its job.
+
+Fix the code on your branch and push again.
 
 ---
 
-Stop here.
+## Stop here
 
-Do not merge the PR yet.
+Do not merge the PR.
 
-In the next step, we will compare your workflow to a working reference in the instructor solution.
+Leave it open with a passing check.
