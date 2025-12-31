@@ -21,8 +21,7 @@ This lab assumes you already have a working dbt project from earlier days.
 From the repository root:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+source ~/.venv/bin/activate
 ```
 
 Expected outcome:
@@ -40,6 +39,9 @@ Expected outcome:
 * dbt prints a version
 
 ### 3) Confirm you are in the dbt project directory
+```
+cd ~/<project-dir>
+```
 
 Run this from the folder containing `dbt_project.yml`:
 
@@ -66,22 +68,6 @@ The isolation comes from writing dbt outputs into different schemas.
 
 ### Step 1.1 — Locate your `profiles.yml`
 
-dbt stores profiles outside the project by default.
-
-To see where dbt expects it:
-
-```bash
-dbt debug --config-dir
-```
-
-Expected outcome:
-
-* dbt prints a directory path
-
-In that directory, there should be a `profiles.yml`.
-
-If there is no `profiles.yml`, create one in that directory.
-
 ### Step 1.2 — Confirm your project’s profile name
 
 Your profile name must match the `profile:` value in `dbt_project.yml`.
@@ -89,7 +75,7 @@ Your profile name must match the `profile:` value in `dbt_project.yml`.
 Open `dbt_project.yml` and find:
 
 ```yaml
-profile: <something>
+profile: dev
 ```
 
 That exact value must be the top-level key in `profiles.yml`.
