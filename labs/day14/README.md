@@ -298,6 +298,16 @@ jobs:
 
       - name: dbt build
         run: dbt build
+
+      # Why all three?
+      # deps  -> validates packages
+      # compile -> validates SQL and refs
+      # build -> runs models + tests
+
+        run: dbt build
+
+      - name: dbt docs generate
+        run: dbt docs generate
 ```
 
 ---
