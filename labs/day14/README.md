@@ -24,7 +24,7 @@ These values are assumed throughout this lab.
 * Git provider: GitHub
 * dbt project name: `dbt_olist_project`
 * Snowflake database: `OLIST`
-* CI schema: `OLIST_CI`
+* CI schema: `ANALYTICS_CI`
 * Warehouse: `COMPUTE_WH`
 * Python version: `3.11`
 
@@ -57,7 +57,7 @@ CI failures should be cheap and disposable.
 
 For that reason, CI writes to its own schema:
 
-* `OLIST_CI`
+* `ANALYTICS_CI`
 
 This schema exists only to validate code changes.
 
@@ -66,13 +66,13 @@ This schema exists only to validate code changes.
 ### Step 0.1 — Confirm CI schema
 
 ```sql
-SHOW SCHEMAS LIKE 'OLIST_CI';
+SHOW SCHEMAS LIKE 'ANALYTICS_CI';
 ```
 
 If missing and permitted:
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS OLIST_CI;
+CREATE SCHEMA IF NOT EXISTS ANALYTICS_CI;
 ```
 
 ---
@@ -89,9 +89,9 @@ Minimum grants:
 
 ```sql
 GRANT USAGE ON DATABASE OLIST TO ROLE ANALYTICS_ROLE;
-GRANT USAGE ON SCHEMA OLIST.OLIST_CI TO ROLE ANALYTICS_ROLE;
-GRANT CREATE TABLE ON SCHEMA OLIST.OLIST_CI TO ROLE ANALYTICS_ROLE;
-GRANT CREATE VIEW  ON SCHEMA OLIST.OLIST_CI TO ROLE ANALYTICS_ROLE;
+GRANT USAGE ON SCHEMA OLIST.ANALYTICS_CI TO ROLE ANALYTICS_ROLE;
+GRANT CREATE TABLE ON SCHEMA OLIST.ANALYTICS_CI TO ROLE ANALYTICS_ROLE;
+GRANT CREATE VIEW  ON SCHEMA OLIST.ANALYTICS_CI TO ROLE ANALYTICS_ROLE;
 ```
 
 If these are missing, CI will connect and then fail at runtime.
@@ -283,7 +283,7 @@ jobs:
                 role: "{{ env_var('SNOWFLAKE_ROLE') }}"
                 warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
                 database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
-                schema: "OLIST_CI"
+                schema: "ANALYTICS_CI"
                 threads: 4
           YAML
 
