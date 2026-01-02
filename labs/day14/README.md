@@ -357,16 +357,3 @@ Restore the secret and push again.
 
 ---
 
-## Step 9 — Final validation
-
-The lab is complete when:
-
-* CI runs on every PR
-* CI fails when credentials are wrong
-* CI passes when restored
-* No CI runs touch DEV or PROD schemas
-
-Leave the PR open.
-Do not merge.
-
-Stop here.
