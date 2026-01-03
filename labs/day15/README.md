@@ -219,7 +219,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install --upgrade pip
 # Keep core + adapter aligned
-pip install "dbt-core==1.9.8" "dbt-snowflake==1.9.8"
+pip install "dbt-core" "dbt-snowflake"
 dbt --version
 '''
       }
