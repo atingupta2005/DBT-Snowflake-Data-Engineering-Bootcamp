@@ -15,7 +15,7 @@ These values are assumed throughout this lab.
 
 * dbt project name: `dbt_olist_project`
 * Snowflake database: `OLIST`
-* PROD schema: `ANALYTICS_PROD`
+* PROD schema: `ANALYTICS_CI`
 * Warehouse: `COMPUTE_WH`
 * Python version: `3.11`
 * Jenkins HTTP port: `8080`
@@ -199,7 +199,7 @@ pipeline {
     // Non-secret config
     SNOWFLAKE_WAREHOUSE = "COMPUTE_WH"
     SNOWFLAKE_DATABASE  = "OLIST"
-    SNOWFLAKE_SCHEMA    = "ANALYTICS_PROD"
+    SNOWFLAKE_SCHEMA    = "ANALYTICS_CI"
     DBT_THREADS         = "4"
     DBT_TARGET          = "prod"
   }
@@ -250,7 +250,7 @@ dbt_olist_project:
       role: "{{ env_var('SNOWFLAKE_ROLE') }}"
       warehouse: "COMPUTE_WH"
       database: "OLIST"
-      schema: "ANALYTICS_PROD"
+      schema: "ANALYTICS_CI"
       threads: 4
 YAML
 
